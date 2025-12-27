@@ -44,18 +44,6 @@ static inline uint64_t get_cycle(void) {
     return (uint64_t)hi << 32 | lo;
 }
 
-// 2. 快速读取RDMA counter（复用已打开的fd，无open/close开销）
-uint64_t read_rdma_counter(int fd) {
-    char buf[32] = {0};
-    // 用pread从偏移0读取，避免lseek，减少syscall开销
-    ssize_t len = pread(fd, buf, sizeof(buf)-1, 0);
-    if (len < 0) {
-        perror("pread counter file failed");
-        exit(EXIT_FAILURE);
-    }
-    return strtoull(buf, NULL, 10);
-}
-
 uint64_t read_rdma_counter_1(int fd) {
     int ret;
     ret = ioctl(fd, CHRDEV_IOCTL_GET_TWO_INT64, &user_data);
@@ -127,30 +115,12 @@ int main(int argc, char *argv[]) {
 
     printf("%d  %d  %d\n", user_data.bus, user_data.slot, user_data.func);
 
-    // 拼接RDMA counter路径
-    char rcv_data_path[128] = {0};
-    char xmit_data_path[128] = {0};
-    snprintf(rcv_data_path, sizeof(rcv_data_path),
-             "/sys/class/infiniband/%s/ports/%d/counters/port_rcv_data",
-             rdma_dev_name, RDMA_PORT);
-    snprintf(xmit_data_path, sizeof(xmit_data_path),
-             "/sys/class/infiniband/%s/ports/%d/counters/port_xmit_data",
-             rdma_dev_name, RDMA_PORT);
-
     counter_fd = open("/dev/chrdev_ioctl_dev", O_RDWR);
     if (counter_fd < 0) {
         perror("open device failed");
         return -1;
     }
     printf("open device /dev/chrdev_ioctl_dev success (fd=%d)\n", counter_fd);
-
-    // 预打开RDMA计数器文件（仅打开一次，复用fd）
-    //rcv_fd = open(rcv_data_path, O_RDONLY);
-    //xmit_fd = open(xmit_data_path, O_RDONLY);
-    //if (rcv_fd < 0 || xmit_fd < 0) {
-    //    perror("open counter file failed");
-    //    exit(EXIT_FAILURE);
-    //}
 
     // 绑定CPU核心
     bind_cpu(CPU_CORE);
@@ -175,9 +145,10 @@ int main(int argc, char *argv[]) {
     while (1) {
         // 步骤1：读取初始cycle和RDMA counter
         t1 = get_cycle();
-        //rcv1 = read_rdma_counter(rcv_fd);
-        //xmit1 = read_rdma_counter(xmit_fd);
-        xmit1 = read_rdma_counter_1(counter_fd);
+        read_rdma_counter_1(counter_fd);
+	xmit1 = user_data.val1;
+	rcv1 = user_data.val2;
+
 
         // 步骤2：微秒级等待（空循环，无syscall开销）
         for (uint64_t i = 0; i < SAMPLING_LOOP; i++) {
@@ -186,9 +157,9 @@ int main(int argc, char *argv[]) {
 
         // 步骤3：读取当前cycle和RDMA counter
         t2 = get_cycle();
-        //rcv2 = read_rdma_counter(rcv_fd);
-        //xmit2 = read_rdma_counter(xmit_fd);
-        //xmit2 = read_rdma_counter_1(counter_fd);
+        read_rdma_counter_1(counter_fd);
+	xmit2 = user_data.val1;
+	rcv2 = user_data.val2;
 
         // 步骤4：计算时间差和带宽
         cycle_diff = t2 - t1;
