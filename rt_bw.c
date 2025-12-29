@@ -44,6 +44,14 @@ static inline uint64_t get_cycle(void) {
     return (uint64_t)hi << 32 | lo;
 }
 
+static double CPU_FREQ;
+static double calibrate_tsc_hz(void) {
+  struct timespec a,b; clock_gettime(CLOCK_MONOTONIC_RAW,&a);
+  uint64_t c1=get_cycle(); struct timespec req={.tv_nsec=200*1000*1000}; nanosleep(&req,NULL);
+  uint64_t c2=get_cycle(); clock_gettime(CLOCK_MONOTONIC_RAW,&b);
+  double dt=(b.tv_sec-a.tv_sec)+(b.tv_nsec-a.tv_nsec)/1e9; return (c2-c1)/dt;
+}
+
 uint64_t read_rdma_counter_1(int fd) {
     int ret;
     ret = ioctl(fd, CHRDEV_IOCTL_GET_TWO_INT64, &user_data);
@@ -69,7 +77,7 @@ void bind_cpu(int core_id) {
 void print_peak_bandwidth(uint64_t elapsed_cycle) {
     if (cache_idx == 0) return;
 
-    double elapsed_s = (double)elapsed_cycle / (CPU_FREQ_GHZ * 1000000000.0);
+    double elapsed_s = (double)elapsed_cycle / (CPU_FREQ * 1000000000.0);
     double rx_peak_gbps = 0.0, tx_peak_gbps = 0.0;
     //for (int i = 0; i < cache_idx; i++) {
     //    if (bw_cache[i].rx_bw_gbps > rx_peak_gbps) rx_peak_gbps = bw_cache[i].rx_bw_gbps;
@@ -198,6 +206,8 @@ void print_peak_bandwidth(uint64_t elapsed_cycle) {
 
     //-------------------------- 3. 单次printf输出完整TOP8字符串 --------------------------
     printf("%s", top_str_buf);
+    double tsc_hz = calibrate_tsc_hz();
+    fprintf(stderr,"TSC ~= %.3f GHz\n", tsc_hz/1e9);
     fflush(stdout);
 
     cache_idx = 0;
@@ -244,11 +254,15 @@ int main(int argc, char *argv[]) {
     }
     printf("open device /dev/chrdev_ioctl_dev success (fd=%d)\n", counter_fd);
 
+    double tsc_hz = calibrate_tsc_hz();
+    fprintf(stderr,"TSC ~= %.3f GHz\n", tsc_hz/1e9);
+    CPU_FREQ = tsc_hz > 0 ? tsc_hz/1e9 : CPU_FREQ_GHZ;
+
     // 绑定CPU核心
     bind_cpu(CPU_CORE);
     printf("已绑定进程到CPU核心 %d\n", CPU_CORE);
     printf("RDMA设备：%s，端口：%d\n", rdma_dev_name, RDMA_PORT);
-    printf("CPU主频：%.2f GHz\n", CPU_FREQ_GHZ);
+    printf("CPU主频：%.2f GHz\n", CPU_FREQ);
     printf("采样空循环次数：%d，打印间隔：%.1f秒\n", loop, PRINT_INTERVAL_S);
     printf("------------------------------------------------------------\n");
 
@@ -258,7 +272,7 @@ int main(int argc, char *argv[]) {
     double time_diff_s;
     uint64_t rcv_diff, xmit_diff;
     double rx_bw_gbps, tx_bw_gbps;
-    uint64_t interval = PRINT_INTERVAL_S * CPU_FREQ_GHZ * 1000000000;
+    uint64_t interval = PRINT_INTERVAL_S * CPU_FREQ * 1000000000;
 
     // 初始化1秒周期起始cycle
     start_cycle = get_cycle();
@@ -287,7 +301,7 @@ int main(int argc, char *argv[]) {
 
         // 步骤4：计算时间差和带宽
         cycle_diff = t2 - t1;
-        time_diff_s = (double)cycle_diff / (CPU_FREQ_GHZ);
+        time_diff_s = (double)cycle_diff / (CPU_FREQ);
         rcv_diff = (rcv2 > rcv1) ? (rcv2 - rcv1) : 0;
         xmit_diff = (xmit2 > xmit1) ? (xmit2 - xmit1) : 0;
         rx_bw_gbps = (rcv_diff * 8.0 * 4) / (time_diff_s);
