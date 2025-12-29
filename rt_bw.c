@@ -71,17 +71,133 @@ void print_peak_bandwidth(uint64_t elapsed_cycle) {
 
     double elapsed_s = (double)elapsed_cycle / (CPU_FREQ_GHZ * 1000000000.0);
     double rx_peak_gbps = 0.0, tx_peak_gbps = 0.0;
-    for (int i = 0; i < cache_idx; i++) {
-        if (bw_cache[i].rx_bw_gbps > rx_peak_gbps) rx_peak_gbps = bw_cache[i].rx_bw_gbps;
-        if (bw_cache[i].tx_bw_gbps > tx_peak_gbps) tx_peak_gbps = bw_cache[i].tx_bw_gbps;
-    }
+    //for (int i = 0; i < cache_idx; i++) {
+    //    if (bw_cache[i].rx_bw_gbps > rx_peak_gbps) rx_peak_gbps = bw_cache[i].rx_bw_gbps;
+    //    if (bw_cache[i].tx_bw_gbps > tx_peak_gbps) tx_peak_gbps = bw_cache[i].tx_bw_gbps;
+    //}
 
     char time_buf[32];
     time_t now = time(NULL);
     strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", localtime(&now));
+    //printf("[%s] 1秒周期内峰值带宽 - RX: %.2f Gbps, TX: %.2f Gbps (采样次数: %d, 实际耗时: %.3f 秒, 平均采样间隔: %.2f 微秒)\n",
+    //       time_buf, rx_peak_gbps, tx_peak_gbps, cache_idx, elapsed_s,
+    //       (elapsed_s * 1000000) / cache_idx); // 计算平均采样间隔（微秒）
+    //fflush(stdout);
+
+    // -------------------------- 1. 单循环完成RX/TX TOP8筛选 --------------------------
+    typedef struct {
+        double bw_value;    // 带宽值
+        int sample_idx;     // 对应的原始采样索引
+    } BW_TOP_T;
+
+    #define TOP_NUM 8  // TOP8数量，便于修改
+    BW_TOP_T rx_top[TOP_NUM] = {0};
+    BW_TOP_T tx_top[TOP_NUM] = {0};
+
+    // 初始化top数组：带宽值设为-1.0，索引设为-1（区分有效/无效数据）
+    for (int i = 0; i < TOP_NUM; i++) {
+        rx_top[i].bw_value = 0;
+        tx_top[i].bw_value = 0;
+        rx_top[i].sample_idx = -1;
+        tx_top[i].sample_idx = -1;
+    }
+    int rx_flag = 0;
+    int tx_flag = 0;
+
+    // 单轮遍历bw_cache，同时筛选RX和TX的TOP8
+    for (int i = 0; i < cache_idx; i++) {
+        double current_rx = bw_cache[i].rx_bw_gbps;
+        double current_tx = bw_cache[i].tx_bw_gbps;
+        int current_sample_idx = i;
+
+        // 处理RX TOP8插入
+        for (int j = 0; j < TOP_NUM; j++) {
+            if (current_rx > rx_top[j].bw_value) {
+                rx_flag = 1;
+                for (int k = TOP_NUM - 1; k > j; k--) {
+                    rx_top[k] = rx_top[k-1];
+                }
+                rx_top[j].bw_value = current_rx;
+                rx_top[j].sample_idx = current_sample_idx;
+                break;
+            }
+        }
+
+        // 处理TX TOP8插入
+        for (int j = 0; j < TOP_NUM; j++) {
+            if (current_tx > tx_top[j].bw_value) {
+                tx_flag = 1;
+                for (int k = TOP_NUM - 1; k > j; k--) {
+                    tx_top[k] = tx_top[k-1];
+                }
+                tx_top[j].bw_value = current_tx;
+                tx_top[j].sample_idx = current_sample_idx;
+                break;
+            }
+        }
+    }
+
+    // -------------------------- 2. 拼接TOP8字符串（无循环打印，仅拼接） --------------------------
+    #define TOP_STR_BUF_SIZE 1024  // 足够容纳RX+TX TOP8的字符串内容
+    char top_str_buf[TOP_STR_BUF_SIZE] = {0};  // 总拼接缓冲区
+    int buf_offset = 0;                        // 缓冲区偏移量，用于逐段拼接
+
+    if (rx_flag) {
+    // 拼接RX带宽TOP8标题
+    buf_offset += snprintf(top_str_buf + buf_offset, TOP_STR_BUF_SIZE - buf_offset,
+                           "[%s] RX TOP8：", time_buf);
+
+    // 拼接RX TOP8有效数据（无循环打印，仅循环拼接）
+    int valid_rx_count = 0;
+    for (int i = 0; i < TOP_NUM; i++) {
+        if (rx_top[i].sample_idx != -1) {
+            valid_rx_count++;
+            // 逐段拼接RX TOP8每条数据，更新偏移量避免缓冲区溢出
+            buf_offset += snprintf(top_str_buf + buf_offset, TOP_STR_BUF_SIZE - buf_offset,
+                                   "  %d：%d，%.2f Gbps",
+                                   i+1, rx_top[i].sample_idx, rx_top[i].bw_value);
+        }
+    }
+    buf_offset += snprintf(top_str_buf + buf_offset, TOP_STR_BUF_SIZE - buf_offset, "\n");
+    // 若无可效RX数据，拼接提示信息
+    if (valid_rx_count == 0) {
+        buf_offset += snprintf(top_str_buf + buf_offset, TOP_STR_BUF_SIZE - buf_offset,
+                               "  无有效RX带宽采样数据\n");
+    }
+    }
+    if (tx_flag) {
+
+    // 拼接TX带宽TOP8标题
+    buf_offset += snprintf(top_str_buf + buf_offset, TOP_STR_BUF_SIZE - buf_offset,
+                           "[%s] TX TOP8：", time_buf);
+
+    // 拼接TX TOP8有效数据（无循环打印，仅循环拼接）
+    int valid_tx_count = 0;
+    for (int i = 0; i < TOP_NUM; i++) {
+        if (tx_top[i].sample_idx != -1) {
+            valid_tx_count++;
+            // 逐段拼接TX TOP8每条数据，更新偏移量
+            buf_offset += snprintf(top_str_buf + buf_offset, TOP_STR_BUF_SIZE - buf_offset,
+                                   "  %d：%d，%.2f Gbps",
+                                   i+1, tx_top[i].sample_idx, tx_top[i].bw_value);
+        }
+    }
+    buf_offset += snprintf(top_str_buf + buf_offset, TOP_STR_BUF_SIZE - buf_offset, "\n");
+    // 若无可效TX数据，拼接提示信息
+    if (valid_tx_count == 0) {
+        buf_offset += snprintf(top_str_buf + buf_offset, TOP_STR_BUF_SIZE - buf_offset,
+                               "  无有效TX带宽采样数据\n");
+    }
+    }
+
+    rx_peak_gbps = rx_top[0].bw_value;
+    tx_peak_gbps = tx_top[0].bw_value;
     printf("[%s] 1秒周期内峰值带宽 - RX: %.2f Gbps, TX: %.2f Gbps (采样次数: %d, 实际耗时: %.3f 秒, 平均采样间隔: %.2f 微秒)\n",
            time_buf, rx_peak_gbps, tx_peak_gbps, cache_idx, elapsed_s,
            (elapsed_s * 1000000) / cache_idx); // 计算平均采样间隔（微秒）
+
+    //-------------------------- 3. 单次printf输出完整TOP8字符串 --------------------------
+    printf("%s", top_str_buf);
     fflush(stdout);
 
     cache_idx = 0;
@@ -106,6 +222,12 @@ int main(int argc, char *argv[]) {
 	exit(1);
     }
 
+    int loop = SAMPLING_LOOP;
+    if (argc >= 3) {
+        loop = atoi(argv[2]);
+	loop = loop == 0 ? SAMPLING_LOOP : loop;
+    }
+
     int bus, slot, func;
     int ret = sscanf(bdf_str, "%x:%x.%x", &user_data.bus, &user_data.slot, &user_data.func);
     if (ret != 3) {
@@ -127,7 +249,7 @@ int main(int argc, char *argv[]) {
     printf("已绑定进程到CPU核心 %d\n", CPU_CORE);
     printf("RDMA设备：%s，端口：%d\n", rdma_dev_name, RDMA_PORT);
     printf("CPU主频：%.2f GHz\n", CPU_FREQ_GHZ);
-    printf("采样空循环次数：%d，打印间隔：%.1f秒\n", SAMPLING_LOOP, PRINT_INTERVAL_S);
+    printf("采样空循环次数：%d，打印间隔：%.1f秒\n", loop, PRINT_INTERVAL_S);
     printf("------------------------------------------------------------\n");
 
     // 初始化变量
@@ -141,17 +263,19 @@ int main(int argc, char *argv[]) {
     // 初始化1秒周期起始cycle
     start_cycle = get_cycle();
 
+    // 步骤1：读取初始cycle和RDMA counter
+    t1 = get_cycle();
+    read_rdma_counter_1(counter_fd);
+    t2 = t1;
+
     // 无限采样循环
     while (1) {
-        // 步骤1：读取初始cycle和RDMA counter
-        t1 = get_cycle();
-        read_rdma_counter_1(counter_fd);
+	t1 = t2;
 	xmit1 = user_data.val1;
 	rcv1 = user_data.val2;
 
-
         // 步骤2：微秒级等待（空循环，无syscall开销）
-        for (uint64_t i = 0; i < SAMPLING_LOOP; i++) {
+        for (uint64_t i = 0; i < loop; i++) {
             __asm__ __volatile__ ("nop"); // 空操作，避免编译器优化
         }
 
@@ -184,6 +308,9 @@ int main(int argc, char *argv[]) {
         if (elapsed_s >= interval) {
             print_peak_bandwidth(elapsed_s);
             start_cycle = current_cycle;
+
+	    t2 = get_cycle();
+	    read_rdma_counter_1(counter_fd);
         }
     }
 
