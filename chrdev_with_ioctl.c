@@ -83,7 +83,7 @@ static long chr_dev_unlocked_ioctl(struct file *filp, unsigned int cmd, unsigned
             return -EFAULT;
         }
 
-        printk(KERN_INFO "ioctl success: val1=%lld, val2=%lld\n", user_data.val1, user_data.val2);
+        //printk(KERN_INFO "ioctl success: val1=%lld, val2=%lld\n", user_data.val1, user_data.val2);
         return 0;  // 处理成功
     }
 
@@ -125,7 +125,12 @@ static int __init chrdev_ioctl_init(void)
     }
 
     // 4. 创建设备类
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,4,0)
+    dev_class = class_create(DEV_NAME);
+#else
     dev_class = class_create(THIS_MODULE, DEV_NAME);
+#endif
+
     if (IS_ERR(dev_class)) {
         printk(KERN_ERR "class create failed!\n");
         ret = PTR_ERR(dev_class);
