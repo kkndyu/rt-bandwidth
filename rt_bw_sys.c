@@ -136,16 +136,22 @@ int main(int argc, char *argv[]) {
     uint64_t rcv_diff, xmit_diff;
     double rx_bw_gbps, tx_bw_gbps;
     uint64_t interval = PRINT_INTERVAL_S * CPU_FREQ_GHZ * 1000000000;
+    uint64_t rcv_tmp;
 
     // 初始化1秒周期起始cycle
     start_cycle = get_cycle();
+    // 步骤1：读取初始cycle和RDMA counter
+    t1 = get_cycle();
+    rcv1 = read_rdma_counter(rcv_fd);
+    uint64_t tmp = get_cycle();
+    t1 += (tmp - t1) >> 1;
+    t2 = t1;
+    rcv2 = rcv1;
 
     // 无限采样循环
     while (1) {
-        // 步骤1：读取初始cycle和RDMA counter
-        t1 = get_cycle();
-        rcv1 = read_rdma_counter(rcv_fd);
-        //xmit1 = read_rdma_counter(xmit_fd);
+	t1 = t2;
+	rcv1 = rcv2;
 
         // 步骤2：微秒级等待（空循环，无syscall开销）
         for (uint64_t i = 0; i < SAMPLING_LOOP; i++) {
@@ -156,6 +162,8 @@ int main(int argc, char *argv[]) {
         t2 = get_cycle();
         rcv2 = read_rdma_counter(rcv_fd);
         //xmit2 = read_rdma_counter(xmit_fd);
+	tmp = get_cycle();
+	t2 += (tmp - t2) >> 1;
 
         // 步骤4：计算时间差和带宽
         cycle_diff = t2 - t1;
@@ -180,6 +188,10 @@ int main(int argc, char *argv[]) {
         if (elapsed_s >= interval) {
             print_peak_bandwidth(elapsed_s);
             start_cycle = current_cycle;
+	    t2 = get_cycle();
+	    rcv2 = read_rdma_counter(rcv_fd);
+	    tmp = get_cycle();
+	    t2 += (tmp - t2) >> 1;
         }
     }
 
