@@ -2,7 +2,7 @@
 KERNELDIR ?= /lib/modules/$(shell uname -r)/build
 # 2. 当前目录（驱动源码目录）
 PWD := $(shell pwd)
-OFED_PATH = /usr/src/ofa_kernel/x86_64/5.15.0-164-generic
+OFED_PATH = /usr/src/ofa_kernel/default
 
 EXTRA_CFLAGS += -I$(OFED_PATH)/include \
                 -include $(OFED_PATH)/include/linux/compat-2.6.h
