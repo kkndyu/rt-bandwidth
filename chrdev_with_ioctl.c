@@ -18,6 +18,41 @@ static struct class *dev_class;            // 设备类
 static struct device *dev_device;
 struct mlx5_ifc_query_vport_counter_out_bits out;
 
+int fq_query_vport_counter(struct mlx5_core_dev *dev, u8 other_vport,
+				  int vf, u8 port_num, void *out)
+{
+	int in_sz = MLX5_ST_SZ_BYTES(query_vport_counter_in);
+	int is_group_manager;
+	void *in;
+	int err;
+
+	//is_group_manager = MLX5_CAP_GEN(dev, vport_group_manager);
+	in = kvzalloc(in_sz, GFP_KERNEL);
+	if (!in) {
+		err = -ENOMEM;
+		return err;
+	}
+
+	MLX5_SET(query_vport_counter_in, in, opcode,
+		 MLX5_CMD_OP_QUERY_VPORT_COUNTER);
+	if (other_vport) {
+		if (is_group_manager) {
+			MLX5_SET(query_vport_counter_in, in, other_vport, 1);
+			MLX5_SET(query_vport_counter_in, in, vport_number, vf + 1);
+		} else {
+			err = -EPERM;
+			goto free;
+		}
+	}
+	//if (MLX5_CAP_GEN(dev, num_ports) == 2)
+	//	MLX5_SET(query_vport_counter_in, in, port_num, port_num);
+
+	err = mlx5_cmd_exec_polling(dev, in, in_sz, out, MLX5_ST_SZ_BYTES(query_vport_counter_out));
+free:
+	kvfree(in);
+	return err;
+}
+
 // 核心：ioctl实现（无传入参数，两个int64_t传出参数）
 static long chr_dev_unlocked_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
@@ -57,7 +92,7 @@ static long chr_dev_unlocked_ioctl(struct file *filp, unsigned int cmd, unsigned
     if (cmd == CHRDEV_IOCTL_GET_TWO_INT64) {
 	int err;
 	//int sz = MLX5_ST_SZ_BYTES(query_vport_counter_out);
-	err = mlx5_core_query_vport_counter(mdev, 0, 0, 1, &out);
+	err = fq_query_vport_counter(mdev, 0, 0, 1, &out);
 	if (!err) {
 #define MLX5_SUM_CNT(p, cntr1, cntr2)   \
         (MLX5_GET64(query_vport_counter_out, p, cntr1) + \
