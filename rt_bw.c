@@ -12,7 +12,7 @@
 #include "chrdev_ioctl_common.h"  // 包含共用头文件
 
 // ==================== 可配置参数 ====================
-#define CPU_CORE 127                // 绑定的CPU核心
+#define CPU_CORE_DFT 127                // 绑定的CPU核心
 #define CPU_FREQ_GHZ 2.7           // CPU主频（GHz）
 #define SAMPLING_LOOP 1000         // 空循环次数（调小到1000，≈0.33微秒/次）
 #define DEFAULT_RDMA_DEV "mlx5_0"  // 默认RDMA设备名
@@ -263,9 +263,15 @@ int main(int argc, char *argv[]) {
     CPU_FREQ = tsc_hz > 0 ? tsc_hz/1e9 : CPU_FREQ_GHZ;
 
     // 绑定CPU核心
+    int CPU_CORE = CPU_CORE_DFT;
+    if (argc >= 4) {
+        CPU_CORE = atoi(argv[3]);
+	CPU_CORE = CPU_CORE == 0 ? CPU_CORE_DFT : CPU_CORE;
+    }
+
     bind_cpu(CPU_CORE);
     printf("已绑定进程到CPU核心 %d\n", CPU_CORE);
-    printf("RDMA设备：%s，端口：%d\n", rdma_dev_name, RDMA_PORT);
+    printf("RDMA设备：%s，端口：%d\n", bdf_str, RDMA_PORT);
     printf("CPU主频：%.2f GHz\n", CPU_FREQ);
     printf("采样空循环次数：%d，打印间隔：%.1f秒\n", loop, PRINT_INTERVAL_S);
     printf("------------------------------------------------------------\n");
