@@ -17,7 +17,7 @@
 #define SAMPLING_LOOP 1000         // 空循环次数（调小到1000，≈0.33微秒/次）
 #define DEFAULT_RDMA_DEV "mlx5_0"  // 默认RDMA设备名
 #define RDMA_PORT 1                // RDMA端口号
-#define CACHE_SIZE 100000000         // 缓存大小（支持1秒内百万级采样）
+#define CACHE_SIZE 10000000         // 缓存大小（支持1秒内百万级采样）
 #define PRINT_INTERVAL_S 2.0       // 1秒打印一次峰值
 // =============================================================================
 
@@ -25,6 +25,7 @@
 typedef struct {
     double rx_bw_gbps;
     double tx_bw_gbps;
+    int delta_us;
 } BandwidthCache;
 
 // 全局变量
@@ -96,6 +97,7 @@ void print_peak_bandwidth(uint64_t elapsed_cycle) {
     typedef struct {
         double bw_value;    // 带宽值
         int sample_idx;     // 对应的原始采样索引
+	int us;
     } BW_TOP_T;
 
     #define TOP_NUM 8  // TOP8数量，便于修改
@@ -127,6 +129,7 @@ void print_peak_bandwidth(uint64_t elapsed_cycle) {
                 }
                 rx_top[j].bw_value = current_rx;
                 rx_top[j].sample_idx = current_sample_idx;
+                rx_top[j].us = bw_cache[i].delta_us;
                 break;
             }
         }
@@ -140,6 +143,7 @@ void print_peak_bandwidth(uint64_t elapsed_cycle) {
                 }
                 tx_top[j].bw_value = current_tx;
                 tx_top[j].sample_idx = current_sample_idx;
+                tx_top[j].us = bw_cache[i].delta_us;
                 break;
             }
         }
@@ -163,7 +167,7 @@ void print_peak_bandwidth(uint64_t elapsed_cycle) {
             // 逐段拼接RX TOP8每条数据，更新偏移量避免缓冲区溢出
             buf_offset += snprintf(top_str_buf + buf_offset, TOP_STR_BUF_SIZE - buf_offset,
                                    "  %d：%d，%.2f Gbps",
-                                   i+1, rx_top[i].sample_idx, rx_top[i].bw_value);
+                                   rx_top[i].us, rx_top[i].sample_idx, rx_top[i].bw_value);
         }
     }
     buf_offset += snprintf(top_str_buf + buf_offset, TOP_STR_BUF_SIZE - buf_offset, "\n");
@@ -187,7 +191,7 @@ void print_peak_bandwidth(uint64_t elapsed_cycle) {
             // 逐段拼接TX TOP8每条数据，更新偏移量
             buf_offset += snprintf(top_str_buf + buf_offset, TOP_STR_BUF_SIZE - buf_offset,
                                    "  %d：%d，%.2f Gbps",
-                                   i+1, tx_top[i].sample_idx, tx_top[i].bw_value);
+                                   tx_top[i].us, tx_top[i].sample_idx, tx_top[i].bw_value);
         }
     }
     buf_offset += snprintf(top_str_buf + buf_offset, TOP_STR_BUF_SIZE - buf_offset, "\n");
@@ -280,7 +284,8 @@ int main(int argc, char *argv[]) {
     // 步骤1：读取初始cycle和RDMA counter
     t1 = get_cycle();
     read_rdma_counter_1(counter_fd);
-    t2 = t1;
+    uint64_t tmp = get_cycle();
+    t2 = t1 + (tmp - t1) >> 1;
 
     // 无限采样循环
     while (1) {
@@ -295,7 +300,9 @@ int main(int argc, char *argv[]) {
 
         // 步骤3：读取当前cycle和RDMA counter
         t2 = get_cycle();
-        read_rdma_counter_1(counter_fd);
+	read_rdma_counter_1(counter_fd);
+	tmp = get_cycle();
+	t2 = t2 + (tmp - t2) >> 1;
 	xmit2 = user_data.val1;
 	rcv2 = user_data.val2;
 
@@ -304,13 +311,14 @@ int main(int argc, char *argv[]) {
         time_diff_s = (double)cycle_diff / (CPU_FREQ);
         rcv_diff = (rcv2 > rcv1) ? (rcv2 - rcv1) : 0;
         xmit_diff = (xmit2 > xmit1) ? (xmit2 - xmit1) : 0;
-        rx_bw_gbps = (rcv_diff * 8.0 * 4) / (time_diff_s);
-        tx_bw_gbps = (xmit_diff * 8.0 * 4) / (time_diff_s);
+        rx_bw_gbps = (rcv_diff * 8.0) / (time_diff_s);
+        tx_bw_gbps = (xmit_diff * 8.0) / (time_diff_s);
 
         // 步骤5：存入缓存（纯内存操作）
         if (cache_idx < CACHE_SIZE) {
             bw_cache[cache_idx].rx_bw_gbps = rx_bw_gbps;
             bw_cache[cache_idx].tx_bw_gbps = tx_bw_gbps;
+            bw_cache[cache_idx].delta_us = time_diff_s / 1000;
             cache_idx++;
         } else {
             fprintf(stderr, "缓存已满，丢弃本次采样数据\n");
@@ -325,6 +333,8 @@ int main(int argc, char *argv[]) {
 
 	    t2 = get_cycle();
 	    read_rdma_counter_1(counter_fd);
+	    tmp = get_cycle();
+	    t2 = t2 + (tmp - t2) >> 1;
         }
     }
 
