@@ -285,7 +285,7 @@ int main(int argc, char *argv[]) {
     t1 = get_cycle();
     read_rdma_counter_1(counter_fd);
     uint64_t tmp = get_cycle();
-    t2 = t1 + (tmp - t1) >> 1;
+    t2 = t1 + ((tmp - t1) >> 1);
 
     // 无限采样循环
     while (1) {
@@ -302,7 +302,7 @@ int main(int argc, char *argv[]) {
         t2 = get_cycle();
 	read_rdma_counter_1(counter_fd);
 	tmp = get_cycle();
-	t2 = t2 + (tmp - t2) >> 1;
+	t2 = t2 + ((tmp - t2) >> 1);
 	xmit2 = user_data.val1;
 	rcv2 = user_data.val2;
 
@@ -311,8 +311,8 @@ int main(int argc, char *argv[]) {
         time_diff_s = (double)cycle_diff / (CPU_FREQ);
         rcv_diff = (rcv2 > rcv1) ? (rcv2 - rcv1) : 0;
         xmit_diff = (xmit2 > xmit1) ? (xmit2 - xmit1) : 0;
-        rx_bw_gbps = (rcv_diff * 8.0) / (time_diff_s);
-        tx_bw_gbps = (xmit_diff * 8.0) / (time_diff_s);
+        rx_bw_gbps = (rcv_diff * 8.0 * 4) / (time_diff_s);
+        tx_bw_gbps = (xmit_diff * 8.0 * 4) / (time_diff_s);
 
         // 步骤5：存入缓存（纯内存操作）
         if (cache_idx < CACHE_SIZE) {
@@ -334,7 +334,7 @@ int main(int argc, char *argv[]) {
 	    t2 = get_cycle();
 	    read_rdma_counter_1(counter_fd);
 	    tmp = get_cycle();
-	    t2 = t2 + (tmp - t2) >> 1;
+	    t2 = t2 + ((tmp - t2) >> 1);
         }
     }
 
