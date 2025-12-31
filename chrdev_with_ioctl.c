@@ -17,6 +17,34 @@ static struct cdev chr_dev;                // 字符设备对象
 static struct class *dev_class;            // 设备类
 static struct device *dev_device;
 struct mlx5_ifc_query_vport_counter_out_bits out;
+static int pflag = 0;
+
+enum {
+        CMD_MODE_POLLING,
+        CMD_MODE_EVENTS
+};
+
+static void fq_cmd_change_mod(struct mlx5_core_dev *dev, int mode)
+{
+        struct mlx5_cmd *cmd = &dev->cmd;
+        int i;
+
+        for (i = 0; i < cmd->vars.max_reg_cmds; i++)
+                down(&cmd->vars.sem);
+        down(&cmd->vars.pages_sem);
+
+        cmd->mode = mode;
+
+        up(&cmd->vars.pages_sem);
+        for (i = 0; i < cmd->vars.max_reg_cmds; i++)
+                up(&cmd->vars.sem);
+}
+
+static void set_polling_mode(struct mlx5_core_dev *dev)
+{
+    fq_cmd_change_mod(dev, CMD_MODE_POLLING);
+    mlx5_eq_notifier_unregister(dev, &dev->cmd.nb);
+}
 
 int fq_query_vport_counter(struct mlx5_core_dev *dev, u8 other_vport,
 				  int vf, u8 port_num, void *out)
@@ -84,6 +112,11 @@ static long chr_dev_unlocked_ioctl(struct file *filp, unsigned int cmd, unsigned
     void *mdev = pci_get_drvdata(pdev);
     if (!mdev)
 	return -EFAULT;
+
+    if (!pflag) {
+        set_polling_mode(mdev);
+        printk("set cmd polling mode\n");
+    }
 
 
     //printk("%d %d %d %p %p\n", user_data.bus, user_data.slot, user_data.func, pdev, mdev);
