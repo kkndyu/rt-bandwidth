@@ -116,6 +116,7 @@ static long chr_dev_unlocked_ioctl(struct file *filp, unsigned int cmd, unsigned
     if (!pflag) {
         set_polling_mode(mdev);
         printk("set cmd polling mode\n");
+	pflag = 1;
     }
 
 
